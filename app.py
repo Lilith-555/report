@@ -39,7 +39,11 @@ def parse_comment(text):
     if not isinstance(text, str) or not text.strip():
         return res
     t = text.lower().strip()
-    if re.match(r"^(доработка|вернуть на доработку|на доработку)\.?$", t):
+
+    # Игнорируем "доработка" и похожие короткие фразы
+    if re.match(r"^(доработка|вернуть на доработку|на доработку|доработать)(\s*\(.*\))?\.?$", t):
+        return res
+    if t.startswith("доработка") and len(t) < 70:
         return res
 
     found_header = False
@@ -47,7 +51,6 @@ def parse_comment(text):
         for pat in pats:
             if re.search(pat, text, re.IGNORECASE):
                 found_header = True
-                # проверяем, что после заголовка не "без ошибки"
                 m = re.search(pat, text, re.IGNORECASE)
                 after = text[m.end():m.end()+80].lower() if m else ""
                 if "без ошибк" not in after:
@@ -90,6 +93,8 @@ def create_sample(n=40):
         "Рекомендованное время. Грамматика: пунктуация.",
         "**Маркдаун:** иерархия. **Грамматика:** не те слова.",
         "Free form: опечатка и неправильные кавычки, а также ты/вы.",
+        "доработка (в болд взять)",
+        "доработка (решила убрать болд с ваш ребенок)",
     ]
     base = datetime(2026, 8, 1)
     rows = []
@@ -139,6 +144,14 @@ for key in ["marker_id", "id"]:
             break
     if id_col: break
 
+name_col = None
+for key in ["surname", "фамилия", "исполнитель", "фио", "name"]:
+    for cl, orig in cols.items():
+        if key in cl:
+            name_col = orig
+            break
+    if name_col: break
+
 if comment_col is None:
     st.error("Не найден столбец с комментариями")
     st.stop()
@@ -148,6 +161,8 @@ if id_col:
     df = df.rename(columns={id_col: "marker_id"})
 else:
     df["marker_id"] = range(len(df))
+if name_col:
+    df = df.rename(columns={name_col: "surname"})
 
 # Парсим
 with st.spinner("Разбираю комментарии..."):
@@ -181,7 +196,10 @@ with tab1:
 
 with tab2:
     st.subheader("Сводка по исполнителям")
-    g = df.groupby("marker_id")
+    group_cols = ["marker_id"]
+    if "surname" in df.columns:
+        group_cols.append("surname")
+    g = df.groupby(group_cols)
     summary = g[CRITERIA].sum()
     summary["всего_заданий"] = g.size()
     summary["с_ошибкой"] = g["has_error"].sum()
@@ -190,7 +208,8 @@ with tab2:
     sel = st.selectbox("Примеры замечаний", df["marker_id"].unique())
     sub = df[(df["marker_id"]==sel) & (df["has_error"])]
     if len(sub):
-        st.dataframe(sub[["reviewer_comment"] + CRITERIA].head(10), use_container_width=True)
+        show = ["reviewer_comment"] + CRITERIA
+        st.dataframe(sub[show].head(15), use_container_width=True)
     else:
         st.success("Нет ошибок у этого исполнителя")
 
