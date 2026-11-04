@@ -7,7 +7,6 @@ import re
 
 st.set_page_config(page_title="Отчёт по качеству", page_icon="📊", layout="wide")
 
-# ========== ПАРСЕР ==========
 CRITERIA = ["мд", "рп", "грамматика", "опечатки", "систем", "контекст", "комментарий", "единообразие", "рекомендации"]
 
 HEADERS = {
@@ -39,12 +38,10 @@ def parse_comment(text):
     if not isinstance(text, str) or not text.strip():
         return res
     t = text.lower().strip()
-
     if re.match(r"^(доработка|вернуть на доработку|на доработку|доработать)(\s*\(.*\))?\.?$", t):
         return res
     if t.startswith("доработка") and len(t) < 70:
         return res
-
     found_header = False
     for crit, pats in HEADERS.items():
         for pat in pats:
@@ -57,7 +54,6 @@ def parse_comment(text):
                         continue
                     res[crit] = 1
                 break
-
     if not found_header:
         for crit, kws in KEYWORDS.items():
             for kw in kws:
@@ -94,7 +90,6 @@ def to_week(dt):
         return pd.NaT
     return dt - pd.Timedelta(days=dt.weekday())
 
-# ========== ДЕМО ==========
 def create_sample(n=50):
     np.random.seed(42)
     execs = [(101,"Иванов"),(102,"Петрова"),(103,"Сидоров"),(104,"Козлова")]
@@ -126,7 +121,6 @@ def create_sample(n=50):
         })
     return pd.DataFrame(rows)
 
-# ========== ИНТЕРФЕЙС ==========
 st.title("📊 Отчёт по качеству")
 
 with st.sidebar:
@@ -154,7 +148,6 @@ else:
     if uploaded_events is not None:
         events_df = pd.read_csv(uploaded_events) if uploaded_events.name.endswith(".csv") else pd.read_excel(uploaded_events)
 
-# Определяем столбцы
 cols = {str(c).lower(): c for c in df.columns}
 def find_col(keys):
     for key in keys:
@@ -175,9 +168,12 @@ if comment_col is None:
     st.stop()
 
 df = df.rename(columns={comment_col: "reviewer_comment"})
-if id_col: df = df.rename(columns={id_col: "marker_id"})
-else: df["marker_id"] = range(len(df))
-if name_col: df = df.rename(columns={name_col: "surname"})
+if id_col:
+    df = df.rename(columns={id_col: "marker_id"})
+else:
+    df["marker_id"] = range(len(df))
+if name_col:
+    df = df.rename(columns={name_col: "surname"})
 if date_col:
     df = df.rename(columns={date_col: "date"})
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -196,10 +192,9 @@ if "date" in df.columns and df["date"].notna().any():
 else:
     df["week"] = pd.NaT
 
-# Метрики
 total = len(df)
 with_err = int(df["has_error"].sum())
-c1,c2,c3,c4 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("Всего заданий", total)
 c2.metric("С ошибками", with_err, f"{with_err/total*100:.1f}%")
 c3.metric("Исполнителей", df["marker_id"].nunique())
@@ -210,19 +205,17 @@ else:
 
 st.markdown("---")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📈 Динамика", "❌ Ошибки по критериям", "👤 По исполнителям", "⏱ Время и мероприятия", "📥 Скачать"
-])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Динамика", "❌ Ошибки по критериям", "👤 По исполнителям", "⏱ Время и мероприятия", "📥 Скачать"])
 
 with tab1:
     st.subheader("Качество и ошибки по неделям")
     if "week" in df.columns and df["week"].notna().any():
         weekly = df.dropna(subset=["week"]).groupby("week").agg(
-            avg_quality=("quality", "mean") if "quality" in df.columns else ("marker_id", "count"),
             tasks=("marker_id", "count"),
             error_rate=("has_error", "mean")
         ).reset_index().sort_values("week")
         if "quality" in df.columns:
+            weekly["avg_quality"] = df.dropna(subset=["week"]).groupby("week")["quality"].mean().values
             st.line_chart(weekly.set_index("week")[["avg_quality"]])
         st.bar_chart(weekly.set_index("week")[["error_rate"]])
         st.dataframe(weekly, use_container_width=True)
@@ -238,7 +231,6 @@ with tab2:
         "всего": [int(df[c].sum()) for c in CRITERIA],
         "доля": [f"{df[c].mean():.1%}" for c in CRITERIA]
     }), use_container_width=True)
-
     if "week" in df.columns and df["week"].notna().any():
         st.subheader("Ошибки по критериям × недели")
         week_crit = df.dropna(subset=["week"]).groupby("week")[CRITERIA].sum()
@@ -254,10 +246,9 @@ with tab3:
     summary["всего_заданий"] = g.size()
     summary["с_ошибкой"] = g["has_error"].sum()
     st.dataframe(summary, use_container_width=True)
-
     sel = st.selectbox("Примеры замечаний", df["marker_id"].unique())
-    sub = df[(df["marker_id"]==sel) & (df["has_error"])]
-    if len(sub):
+    sub = df[(df["marker_id"] == sel) & (df["has_error"])]
+    if len(sub) > 0:
         st.dataframe(sub[["reviewer_comment"] + CRITERIA].head(15), use_container_width=True)
     else:
         st.success("Нет ошибок у этого исполнителя")
@@ -265,3 +256,34 @@ with tab3:
 with tab4:
     st.subheader("Время выполнения")
     if "time_min" in df.columns and df["time_min"].notna().any():
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Среднее (мин)", f"{df['time_min'].mean():.1f}")
+        c2.metric("Медиана", f"{df['time_min'].median():.1f}")
+        c3.metric("Макс", f"{df['time_min'].max():.0f}")
+    else:
+        st.info("Столбец времени не найден")
+    st.subheader("Статус времени из комментариев")
+    time_counts = df["time_status"].value_counts(dropna=False).rename({None: "Не указано"})
+    st.write(time_counts)
+    exceeded = df[df["time_status"] == "Превышено"]
+    if len(exceeded) > 0:
+        st.warning(f"Заданий с превышением времени: {len(exceeded)}")
+        st.dataframe(exceeded[["marker_id", "reviewer_comment"]].head(10), use_container_width=True)
+    st.subheader("Мероприятия (ВКС)")
+    if events_df is not None and len(events_df) > 0:
+        st.dataframe(events_df, use_container_width=True)
+    else:
+        st.info("Файл мероприятий не загружен")
+
+with tab5:
+    st.subheader("Скачать Excel-отчёт")
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        summary.to_excel(writer, sheet_name="По_исполнителям")
+        df.to_excel(writer, sheet_name="С_разбором", index=False)
+        pd.DataFrame({"критерий": CRITERIA, "всего": [int(df[c].sum()) for c in CRITERIA]}).to_excel(writer, sheet_name="Критерии", index=False)
+        if events_df is not None:
+            events_df.to_excel(writer, sheet_name="Мероприятия", index=False)
+    st.download_button("📥 Скачать отчёт", data=buffer.getvalue(),
+                       file_name=f"quality_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
