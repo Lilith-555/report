@@ -208,19 +208,80 @@ st.markdown("---")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Динамика", "❌ Ошибки по критериям", "👤 По исполнителям", "⏱ Время и мероприятия", "📥 Скачать"])
 
 with tab1:
-    st.subheader("Качество и ошибки по неделям")
-    if "week" in df.columns and df["week"].notna().any():
-        weekly = df.dropna(subset=["week"]).groupby("week").agg(
-            tasks=("marker_id", "count"),
-            error_rate=("has_error", "mean")
-        ).reset_index().sort_values("week")
-        if "quality" in df.columns:
-            weekly["avg_quality"] = df.dropna(subset=["week"]).groupby("week")["quality"].mean().values
-            st.line_chart(weekly.set_index("week")[["avg_quality"]])
-        st.bar_chart(weekly.set_index("week")[["error_rate"]])
-        st.dataframe(weekly, use_container_width=True)
+    st.subheader("Сравнение недель по исполнителям")
+
+    if "week" not in df.columns or df["week"].isna().all():
+        st.info("Нет дат — сравнение недель недоступно")
     else:
-        st.info("Нет дат — динамика недоступна")
+        weeks = sorted(df["week"].dropna().unique())
+        if len(weeks) < 2:
+            st.info("Нужно минимум 2 недели данных")
+        else:
+            # Выбор недель для сравнения
+            col_a, col_b = st.columns(2)
+            with col_a:
+                week1 = st.selectbox("Неделя 1 (база)", options=weeks, index=max(0, len(weeks)-2), format_func=lambda x: x.strftime("%d.%m.%Y"))
+            with col_b:
+                week2 = st.selectbox("Неделя 2 (сравнение)", options=weeks, index=len(weeks)-1, format_func=lambda x: x.strftime("%d.%m.%Y"))
+
+            # Считаем показатели по каждой неделе
+            def week_stats(w):
+                sub = df[df["week"] == w]
+                g = sub.groupby("marker_id")
+                res = pd.DataFrame({
+                    "заданий": g.size(),
+                    "с_ошибкой": g["has_error"].sum(),
+                    "доля_ошибок": g["has_error"].mean()
+                })
+                if "quality" in sub.columns:
+                    res["качество"] = g["quality"].mean()
+                if "surname" in sub.columns:
+                    names = sub.groupby("marker_id")["surname"].first()
+                    res = res.join(names)
+                return res
+
+            s1 = week_stats(week1).add_suffix("_н1")
+            s2 = week_stats(week2).add_suffix("_н2")
+
+            # Объединяем
+            comp = s1.join(s2, how="outer").fillna(0)
+
+            # % изменения
+            if "качество_н1" in comp.columns and "качество_н2" in comp.columns:
+                comp["Δ_качество_%"] = ((comp["качество_н2"] - comp["качество_н1"]) / comp["качество_н1"].replace(0, np.nan) * 100).round(1)
+            comp["Δ_доля_ошибок_%"] = ((comp["доля_ошибок_н2"] - comp["доля_ошибок_н1"]) * 100).round(1)
+
+            # Порядок столбцов
+            cols_order = []
+            if "surname_н1" in comp.columns:
+                cols_order.append("surname_н1")
+            cols_order += ["заданий_н1", "заданий_н2", "с_ошибкой_н1", "с_ошибкой_н2", "доля_ошибок_н1", "доля_ошибок_н2", "Δ_доля_ошибок_%"]
+            if "качество_н1" in comp.columns:
+                cols_order += ["качество_н1", "качество_н2", "Δ_качество_%"]
+
+            cols_order = [c for c in cols_order if c in comp.columns]
+            result = comp[cols_order].reset_index()
+
+            # Красивые названия
+            rename = {
+                "marker_id": "ID",
+                "surname_н1": "Исполнитель",
+                "заданий_н1": "Заданий (нед.1)",
+                "заданий_н2": "Заданий (нед.2)",
+                "с_ошибкой_н1": "С ошибкой (нед.1)",
+                "с_ошибкой_н2": "С ошибкой (нед.2)",
+                "доля_ошибок_н1": "Доля ошибок (нед.1)",
+                "доля_ошибок_н2": "Доля ошибок (нед.2)",
+                "Δ_доля_ошибок_%": "Δ доля ошибок %",
+                "качество_н1": "Качество (нед.1)",
+                "качество_н2": "Качество (нед.2)",
+                "Δ_качество_%": "Δ качество %"
+            }
+            result = result.rename(columns=rename)
+
+            st.dataframe(result, use_container_width=True)
+
+            st.caption(f"Неделя 1: {week1.strftime('%d.%m.%Y')}  |  Неделя 2: {week2.strftime('%d.%m.%Y')}")
 
 with tab2:
     st.subheader("Ошибки по критериям")
