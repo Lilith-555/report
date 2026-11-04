@@ -340,11 +340,17 @@ with tab5:
     st.subheader("Скачать Excel-отчёт")
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        summary.to_excel(writer, sheet_name="По_исполнителям")
-        df.to_excel(writer, sheet_name="С_разбором", index=False)
-        pd.DataFrame({"критерий": CRITERIA, "всего": [int(df[c].sum()) for c in CRITERIA]}).to_excel(writer, sheet_name="Критерии", index=False)
+        summary.to_excel(writer, sheet_name="by_executor")
+        df.to_excel(writer, sheet_name="full_data", index=False)
+        pd.DataFrame({
+            "criterion": CRITERIA,
+            "total": [int(df[c].sum()) for c in CRITERIA]
+        }).to_excel(writer, sheet_name="criteria", index=False)
         if events_df is not None:
-            events_df.to_excel(writer, sheet_name="Мероприятия", index=False)
-    st.download_button("📥 Скачать отчёт", data=buffer.getvalue(),
-                       file_name=f"quality_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            events_df.to_excel(writer, sheet_name="events", index=False)
+    st.download_button(
+        "📥 Скачать отчёт",
+        data=buffer.getvalue(),
+        file_name=f"quality_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
