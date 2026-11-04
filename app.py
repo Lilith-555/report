@@ -209,7 +209,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Динамика", "❌ Ошибк
 
 with tab1:
     st.subheader("Сравнение недель по исполнителям")
-
     if "week" not in df.columns or df["week"].isna().all():
         st.info("Нет дат — сравнение недель недоступно")
     else:
@@ -217,14 +216,12 @@ with tab1:
         if len(weeks) < 2:
             st.info("Нужно минимум 2 недели данных")
         else:
-            # Выбор недель для сравнения
             col_a, col_b = st.columns(2)
             with col_a:
                 week1 = st.selectbox("Неделя 1 (база)", options=weeks, index=max(0, len(weeks)-2), format_func=lambda x: x.strftime("%d.%m.%Y"))
             with col_b:
                 week2 = st.selectbox("Неделя 2 (сравнение)", options=weeks, index=len(weeks)-1, format_func=lambda x: x.strftime("%d.%m.%Y"))
 
-            # Считаем показатели по каждой неделе
             def week_stats(w):
                 sub = df[df["week"] == w]
                 g = sub.groupby("marker_id")
@@ -242,27 +239,21 @@ with tab1:
 
             s1 = week_stats(week1).add_suffix("_н1")
             s2 = week_stats(week2).add_suffix("_н2")
-
-            # Объединяем
             comp = s1.join(s2, how="outer").fillna(0)
 
-            # % изменения
             if "качество_н1" in comp.columns and "качество_н2" in comp.columns:
                 comp["Δ_качество_%"] = ((comp["качество_н2"] - comp["качество_н1"]) / comp["качество_н1"].replace(0, np.nan) * 100).round(1)
             comp["Δ_доля_ошибок_%"] = ((comp["доля_ошибок_н2"] - comp["доля_ошибок_н1"]) * 100).round(1)
 
-            # Порядок столбцов
             cols_order = []
             if "surname_н1" in comp.columns:
                 cols_order.append("surname_н1")
             cols_order += ["заданий_н1", "заданий_н2", "с_ошибкой_н1", "с_ошибкой_н2", "доля_ошибок_н1", "доля_ошибок_н2", "Δ_доля_ошибок_%"]
             if "качество_н1" in comp.columns:
                 cols_order += ["качество_н1", "качество_н2", "Δ_качество_%"]
-
             cols_order = [c for c in cols_order if c in comp.columns]
             result = comp[cols_order].reset_index()
 
-            # Красивые названия
             rename = {
                 "marker_id": "ID",
                 "surname_н1": "Исполнитель",
@@ -278,9 +269,7 @@ with tab1:
                 "Δ_качество_%": "Δ качество %"
             }
             result = result.rename(columns=rename)
-
             st.dataframe(result, use_container_width=True)
-
             st.caption(f"Неделя 1: {week1.strftime('%d.%m.%Y')}  |  Неделя 2: {week2.strftime('%d.%m.%Y')}")
 
 with tab2:
@@ -338,19 +327,27 @@ with tab4:
 
 with tab5:
     st.subheader("Скачать Excel-отчёт")
+    df_export = df.copy()
+    for col in df_export.columns:
+        if pd.api.types.is_datetime64_any_dtype(df_export[col]):
+            try:
+                df_export[col] = df_export[col].dt.tz_localize(None)
+            except Exception:
+                df_export[col] = df_export[col].astype(str)
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         summary.to_excel(writer, sheet_name="by_executor")
-        df.to_excel(writer, sheet_name="full_data", index=False)
-        pd.DataFrame({
-            "criterion": CRITERIA,
-            "total": [int(df[c].sum()) for c in CRITERIA]
-        }).to_excel(writer, sheet_name="criteria", index=False)
+        df_export.to_excel(writer, sheet_name="full_data", index=False)
+        pd.DataFrame({"criterion": CRITERIA, "total": [int(df[c].sum()) for c in CRITERIA]}).to_excel(writer, sheet_name="criteria", index=False)
         if events_df is not None:
-            events_df.to_excel(writer, sheet_name="events", index=False)
-    st.download_button(
-        "📥 Скачать отчёт",
-        data=buffer.getvalue(),
-        file_name=f"quality_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            events_export = events_df.copy()
+            for col in events_export.columns:
+                if pd.api.types.is_datetime64_any_dtype(events_export[col]):
+                    try:
+                        events_export[col] = events_export[col].dt.tz_localize(None)
+                    except Exception:
+                        events_export[col] = events_export[col].astype(str)
+            events_export.to_excel(writer, sheet_name="events", index=False)
+    st.download_button("📥 Скачать отчёт", data=buffer.getvalue(),
+                       file_name=f"quality_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
