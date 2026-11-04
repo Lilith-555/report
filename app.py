@@ -40,7 +40,6 @@ def parse_comment(text):
         return res
     t = text.lower().strip()
 
-    # Игнорируем "доработка" и похожие короткие фразы
     if re.match(r"^(доработка|вернуть на доработку|на доработку|доработать)(\s*\(.*\))?\.?$", t):
         return res
     if t.startswith("доработка") and len(t) < 70:
@@ -69,16 +68,34 @@ def parse_comment(text):
                     break
     return res
 
+def parse_time_status(text):
+    if not isinstance(text, str):
+        return None
+    t = text.lower()
+    if re.search(r"превышен[оаеы]?\s*(время|лимит|норма)|время\s*превышен|сверх\s*нормы", t):
+        return "Превышено"
+    if re.search(r"допустим[оаеы]?\s*время|в\s*пределах\s*допустим", t):
+        return "Допустимое"
+    if re.search(r"рекомендованн[оаеы]?\s*время|в\s*рекомендованн|норма\s*времени", t):
+        return "Рекомендованное"
+    return None
+
 def process_df(df, comment_col):
     parsed = df[comment_col].apply(parse_comment)
     for c in CRITERIA:
         df[c] = parsed.apply(lambda x: x[c])
+    df["time_status"] = df[comment_col].apply(parse_time_status)
     error_cols = [c for c in CRITERIA if c != "рекомендации"]
     df["has_error"] = df[error_cols].sum(axis=1) > 0
     return df
 
+def to_week(dt):
+    if pd.isna(dt):
+        return pd.NaT
+    return dt - pd.Timedelta(days=dt.weekday())
+
 # ========== ДЕМО ==========
-def create_sample(n=40):
+def create_sample(n=50):
     np.random.seed(42)
     execs = [(101,"Иванов"),(102,"Петрова"),(103,"Сидоров"),(104,"Козлова")]
     comments = [
@@ -94,7 +111,7 @@ def create_sample(n=40):
         "**Маркдаун:** иерархия. **Грамматика:** не те слова.",
         "Free form: опечатка и неправильные кавычки, а также ты/вы.",
         "доработка (в болд взять)",
-        "доработка (решила убрать болд с ваш ребенок)",
+        "Допустимое время. Опечатки: потерянная точка.",
     ]
     base = datetime(2026, 8, 1)
     rows = []
@@ -102,7 +119,7 @@ def create_sample(n=40):
         eid, name = execs[i % 4]
         rows.append({
             "marker_id": eid, "surname": name,
-            "date": base + timedelta(days=int(np.random.randint(0,50))),
+            "date": base + timedelta(days=int(np.random.randint(0, 70))),
             "quality": float(np.random.choice([0.75,0.8,0.85,0.9,0.95,1.0])),
             "time_min": int(np.random.randint(20,90)),
             "reviewer_comment": str(np.random.choice(comments))
@@ -115,58 +132,69 @@ st.title("📊 Отчёт по качеству")
 with st.sidebar:
     st.header("Настройки")
     use_sample = st.checkbox("Демо-данные", value=True)
-    uploaded = st.file_uploader("Excel / CSV", type=["xlsx","csv"], disabled=use_sample)
+    uploaded = st.file_uploader("Excel / CSV с заданиями", type=["xlsx","csv"], disabled=use_sample)
+    uploaded_events = st.file_uploader("Мероприятия / ВКС (опционально)", type=["xlsx","csv"])
 
 if use_sample:
-    df = create_sample(40)
-    st.info("Демо-данные. Снимите галочку, чтобы загрузить свой файл.")
+    df = create_sample(50)
+    events_df = pd.DataFrame({
+        "date": pd.to_datetime(["2026-08-15","2026-09-01","2026-09-20","2026-10-05"]),
+        "type": ["индивидуальная","малая группа","индивидуальная","малая группа"],
+        "participants": ["Иванов","Петрова, Сидоров","Козлова","Морозов, Васильева"],
+        "topic": ["Системные ошибки","Единообразие и РП","Контекст","Опечатки и грамматика"],
+        "result": ["Улучшение","Снижение ошибок РП","Закрепление","Практика"]
+    })
+    st.info("Демо-данные. Снимите галочку, чтобы загрузить свои файлы.")
 else:
     if uploaded is None:
-        st.warning("Загрузите файл")
+        st.warning("Загрузите файл с заданиями")
         st.stop()
     df = pd.read_csv(uploaded) if uploaded.name.endswith(".csv") else pd.read_excel(uploaded)
+    events_df = None
+    if uploaded_events is not None:
+        events_df = pd.read_csv(uploaded_events) if uploaded_events.name.endswith(".csv") else pd.read_excel(uploaded_events)
 
 # Определяем столбцы
-cols = {c.lower(): c for c in df.columns}
-comment_col = None
-for key in ["reviewer_comment", "comment", "коммент", "замечан"]:
-    for cl, orig in cols.items():
-        if key in cl:
-            comment_col = orig
-            break
-    if comment_col: break
+cols = {str(c).lower(): c for c in df.columns}
+def find_col(keys):
+    for key in keys:
+        for cl, orig in cols.items():
+            if key in cl:
+                return orig
+    return None
 
-id_col = None
-for key in ["marker_id", "id"]:
-    for cl, orig in cols.items():
-        if key in cl:
-            id_col = orig
-            break
-    if id_col: break
-
-name_col = None
-for key in ["surname", "фамилия", "исполнитель", "фио", "name"]:
-    for cl, orig in cols.items():
-        if key in cl:
-            name_col = orig
-            break
-    if name_col: break
+comment_col = find_col(["reviewer_comment", "comment", "коммент", "замечан"])
+id_col = find_col(["marker_id", "id"])
+name_col = find_col(["surname", "фамилия", "исполнитель", "фио", "name"])
+date_col = find_col(["date", "дата"])
+quality_col = find_col(["quality", "качество", "оценка"])
+time_col = find_col(["time_min", "time", "время"])
 
 if comment_col is None:
     st.error("Не найден столбец с комментариями")
     st.stop()
 
 df = df.rename(columns={comment_col: "reviewer_comment"})
-if id_col:
-    df = df.rename(columns={id_col: "marker_id"})
-else:
-    df["marker_id"] = range(len(df))
-if name_col:
-    df = df.rename(columns={name_col: "surname"})
+if id_col: df = df.rename(columns={id_col: "marker_id"})
+else: df["marker_id"] = range(len(df))
+if name_col: df = df.rename(columns={name_col: "surname"})
+if date_col:
+    df = df.rename(columns={date_col: "date"})
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+if quality_col:
+    df = df.rename(columns={quality_col: "quality"})
+    df["quality"] = pd.to_numeric(df["quality"], errors="coerce")
+if time_col:
+    df = df.rename(columns={time_col: "time_min"})
+    df["time_min"] = pd.to_numeric(df["time_min"], errors="coerce")
 
-# Парсим
 with st.spinner("Разбираю комментарии..."):
     df = process_df(df, "reviewer_comment")
+
+if "date" in df.columns and df["date"].notna().any():
+    df["week"] = df["date"].apply(to_week)
+else:
+    df["week"] = pd.NaT
 
 # Метрики
 total = len(df)
@@ -182,10 +210,27 @@ else:
 
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["Ошибки по критериям", "По исполнителям", "Скачать отчёт"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📈 Динамика", "❌ Ошибки по критериям", "👤 По исполнителям", "⏱ Время и мероприятия", "📥 Скачать"
+])
 
 with tab1:
-    st.subheader("Количество ошибок по критериям")
+    st.subheader("Качество и ошибки по неделям")
+    if "week" in df.columns and df["week"].notna().any():
+        weekly = df.dropna(subset=["week"]).groupby("week").agg(
+            avg_quality=("quality", "mean") if "quality" in df.columns else ("marker_id", "count"),
+            tasks=("marker_id", "count"),
+            error_rate=("has_error", "mean")
+        ).reset_index().sort_values("week")
+        if "quality" in df.columns:
+            st.line_chart(weekly.set_index("week")[["avg_quality"]])
+        st.bar_chart(weekly.set_index("week")[["error_rate"]])
+        st.dataframe(weekly, use_container_width=True)
+    else:
+        st.info("Нет дат — динамика недоступна")
+
+with tab2:
+    st.subheader("Ошибки по критериям")
     sums = df[CRITERIA].sum().sort_values(ascending=False)
     st.bar_chart(sums)
     st.dataframe(pd.DataFrame({
@@ -194,7 +239,12 @@ with tab1:
         "доля": [f"{df[c].mean():.1%}" for c in CRITERIA]
     }), use_container_width=True)
 
-with tab2:
+    if "week" in df.columns and df["week"].notna().any():
+        st.subheader("Ошибки по критериям × недели")
+        week_crit = df.dropna(subset=["week"]).groupby("week")[CRITERIA].sum()
+        st.dataframe(week_crit, use_container_width=True)
+
+with tab3:
     st.subheader("Сводка по исполнителям")
     group_cols = ["marker_id"]
     if "surname" in df.columns:
@@ -208,17 +258,10 @@ with tab2:
     sel = st.selectbox("Примеры замечаний", df["marker_id"].unique())
     sub = df[(df["marker_id"]==sel) & (df["has_error"])]
     if len(sub):
-        show = ["reviewer_comment"] + CRITERIA
-        st.dataframe(sub[show].head(15), use_container_width=True)
+        st.dataframe(sub[["reviewer_comment"] + CRITERIA].head(15), use_container_width=True)
     else:
         st.success("Нет ошибок у этого исполнителя")
 
-with tab3:
-    st.subheader("Скачать Excel")
-    buffer = BytesIO()
-    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        summary.to_excel(writer, sheet_name="По_исполнителям")
-        df.to_excel(writer, sheet_name="С_разбором", index=False)
-        pd.DataFrame({"критерий": CRITERIA, "всего": [int(df[c].sum()) for c in CRITERIA]}).to_excel(writer, sheet_name="Критерии", index=False)
-    st.download_button("Скачать отчёт", data=buffer.getvalue(), file_name="quality_report.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+with tab4:
+    st.subheader("Время выполнения")
+    if "time_min" in df.columns and df["time_min"].notna().any():
